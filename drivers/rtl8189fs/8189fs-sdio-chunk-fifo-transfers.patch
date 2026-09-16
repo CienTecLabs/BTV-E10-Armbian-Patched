@@ -1,0 +1,76 @@
+diff --git a/hal/rtl8188f/sdio/sdio_ops.c b/hal/rtl8188f/sdio/sdio_ops.c
+index c6cda8e..4174b8e 100644
+--- a/hal/rtl8188f/sdio/sdio_ops.c
++++ b/hal/rtl8188f/sdio/sdio_ops.c
+@@ -32,6 +32,33 @@
+  *
+  * Creadted by Roger, 2011.01.31.
+  *   */
++
++/*
++ * Some SDIO hosts can only move a small amount of data per request. Example:
++ * Amlogic G12A sd_emmc_a with the "amlogic,dram-access-quirk" bounces every
++ * transfer through a 1536 byte SRAM buffer (max_req_size = 1536). The MMC core
++ * then splits a larger sdio_memcpy_fromio()/sdio_memcpy_toio() into several
++ * CMD53 and increments the address for each of them. The RX/TX FIFO "address"
++ * of these chips is not a memory address: it encodes the RX sequence number
++ * or the TX transfer length, so every CMD53 belonging to one FIFO transfer has
++ * to carry the same address, as rtw88's rtw_sdio_read_port()/write_port() do.
++ * Return the largest chunk the host can transfer in a single request.
++ */
++static u32 rtw_sdio_port_chunk_size(struct intf_hdl *pintfhdl, u32 cnt)
++{
++	struct sdio_func *func = pintfhdl->pintf_dev->intf_data.func;
++	struct mmc_host *host = func->card->host;
++	u32 blksz = func->cur_blksize ? func->cur_blksize : 512;
++	u32 max = host->max_req_size;
++
++	if (host->max_blk_count && host->max_blk_count * blksz < max)
++		max = host->max_blk_count * blksz;
++	if (!max || max >= cnt)
++		return cnt;
++	max -= max % blksz;
++	return max ? max : blksz;
++}
++
+ static void HalSdioGetCmdAddr8188FSdio(
+ 		PADAPTER			padapter,
+ 		u8				DeviceID,
+@@ -607,7 +634,17 @@ static u32 sdio_read_port(
+ #endif
+ 	}
+ 
+-	err = _sd_read(pintfhdl, addr, cnt, mem);
++	{
++		u32 chunk = rtw_sdio_port_chunk_size(pintfhdl, cnt), off = 0, n;
++
++		err = 0;
++		while (off < cnt && !err) {
++			n = (cnt - off < chunk) ? (cnt - off) : chunk;
++			/* same FIFO address for every chunk, see rtw_sdio_port_chunk_size() */
++			err = _sd_read(pintfhdl, addr, n, mem + off);
++			off += n;
++		}
++	}
+ 
+ #ifdef SDIO_DYNAMIC_ALLOC_MEM
+ 	if ((oldcnt != cnt) && (oldmem)) {
+@@ -659,7 +696,17 @@ static u32 sdio_write_port(
+ 
+ 	cnt = rtw_sdio_cmd53_align_size(adapter_to_dvobj(padapter), cnt);
+ 
+-	err = sd_write(pintfhdl, addr, cnt, xmitbuf->pdata);
++	{
++		u32 chunk = rtw_sdio_port_chunk_size(pintfhdl, cnt), off = 0, n;
++
++		err = 0;
++		while (off < cnt && !err) {
++			n = (cnt - off < chunk) ? (cnt - off) : chunk;
++			/* same FIFO address for every chunk, see rtw_sdio_port_chunk_size() */
++			err = sd_write(pintfhdl, addr, n, xmitbuf->pdata + off);
++			off += n;
++		}
++	}
+ 
+ 	rtw_sctx_done_err(&xmitbuf->sctx,
+ 		  err ? RTW_SCTX_DONE_WRITE_PORT_ERR : RTW_SCTX_DONE_SUCCESS);

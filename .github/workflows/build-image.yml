@@ -1,0 +1,107 @@
+name: Build BTV E10 image
+
+on:
+  workflow_dispatch:
+    inputs:
+      kver:
+        description: "Kernel ophub (serie 6.12), ex. 6.12.109. Precisa existir em ophub/kernel kernel_stable e na imagem base"
+        default: "6.12.109"
+        required: true
+      base_release:
+        description: "Tag da release do ophub/amlogic-s9xxx-armbian com a imagem base"
+        default: "Armbian_bookworm_arm64_server_2026.09"
+        required: true
+      base_image:
+        description: "Arquivo da imagem base (s905x2, mesmo kernel)"
+        default: "Armbian_26.11.0_amlogic_s905x2_bookworm_6.12.109_server_2026.09.14.img.gz"
+        required: true
+      base_sha256:
+        description: "sha256 esperado da imagem base (opcional; vazio = so registra)"
+        default: ""
+        required: false
+      publish:
+        description: "Publicar como release (build-N)"
+        type: boolean
+        default: false
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  KVER: ${{ inputs.kver || '6.12.109' }}
+  BASE_RELEASE: ${{ inputs.base_release || 'Armbian_bookworm_arm64_server_2026.09' }}
+  BASE_IMAGE: ${{ inputs.base_image || 'Armbian_26.11.0_amlogic_s905x2_bookworm_6.12.109_server_2026.09.14.img.gz' }}
+  BASE_SHA256: ${{ inputs.base_sha256 || '' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependencias
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-14-aarch64-linux-gnu binutils-aarch64-linux-gnu bc bison flex libssl-dev libelf-dev \
+            device-tree-compiler kmod mtools file git curl gzip
+          df -h /
+
+      - name: Compilar 8189fs para ${{ env.KVER }}-ophub
+        run: bash scripts/build-8189fs.sh "$KVER" out
+
+      - name: Baixar imagem base
+        run: |
+          curl -fL -o "$BASE_IMAGE" \
+            "https://github.com/ophub/amlogic-s9xxx-armbian/releases/download/$BASE_RELEASE/$BASE_IMAGE"
+          if [ -n "$BASE_SHA256" ]; then
+            echo "$BASE_SHA256  $BASE_IMAGE" | sha256sum -c -
+          fi
+          sha256sum "$BASE_IMAGE" | tee out/base-image.sha256
+          # o kernel da imagem base precisa ser o mesmo para o qual o modulo foi compilado
+          case "$BASE_IMAGE" in *"_${KVER}_"*) ;; *) echo "imagem base nao e do kernel $KVER"; exit 1;; esac
+
+      - name: Montar pacote
+        run: |
+          mkdir -p pkg
+          cp "out/8189fs-${KVER}-ophub.ko" pkg/
+          cp boards/btv-e10/8189fs.conf pkg/
+
+      - name: Gerar imagem
+        run: sudo bash scripts/e10-make-image.sh "$BASE_IMAGE" pkg
+
+      - name: Coletar artefatos
+        run: |
+          mkdir -p dist
+          sudo mv ./*btv-e10*.img.gz ./*btv-e10*.img.gz.sha dist/
+          sudo cp e10-work/meson-g12a-btv-e10.dtb e10-work/meson-g12a-btv-e10.dts dist/
+          cp "out/8189fs-${KVER}-ophub.ko" drivers/rtl8189fs/*.patch boards/btv-e10/8189fs.conf out/base-image.sha256 dist/
+          sudo chown -R "$(id -u):$(id -g)" dist
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          ls -la dist
+
+      - name: Artefato do workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: btv-e10-image-${{ env.KVER }}
+          path: dist/*
+          retention-days: 14
+          compression-level: 0
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish == true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('build-{0}', github.run_number) }}
+          name: "BTV E10 - Armbian ${{ env.KVER }}-ophub"
+          body: |
+            Imagem Armbian (ophub) para a BTV Express E10 com WiFi RTL8189FTV funcional.
+            Base: ${{ env.BASE_IMAGE }} (release ${{ env.BASE_RELEASE }}). Kernel ${{ env.KVER }}-ophub.
+            Conteudo: imagem .img.gz + .sha, modulo 8189fs, patch, DTB/DTS, 8189fs.conf, SHA256SUMS.
+            Gravar com balenaEtcher/Rufus; primeira vez em cada caixa com o botao UPDATE ao ligar;
+            para a eMMC: armbian-install, modelo 309 (BTV-Express-E10).
+          files: dist/*
