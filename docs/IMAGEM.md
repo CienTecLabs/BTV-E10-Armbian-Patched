@@ -31,7 +31,13 @@ recompilar o módulo (ver "Atualização de kernel").
 4. `/etc/modprobe.d/8189fs.conf`.
 5. Entrada `309 BTV-Express-E10` em `/etc/model_database.conf`, para o `armbian-install`
    gravar na eMMC com o DTB certo.
-6. `/etc/e10-release` com data, imagem base, kernel e sha256 do módulo.
+6. LEDs frontais: nó `pwm-leds` no DTB (POWER = PWM_AO_A em GPIOAO_11, NET = PWM_AO_C em
+   GPIOAO_4, 10 kHz, `brightness` de 0 a 255 em `/sys/class/leds/e10:power` e `e10:net`) e
+   `/etc/NetworkManager/dispatcher.d/90-e10-netled`, que deixa o NET verde enquanto há
+   conectividade. Cada indicador é um par vermelho/verde no mesmo pino (nível alto acende o verde,
+   baixo o vermelho), então valores intermediários misturam as cores; o padrão usa só 0 e 255. É o
+   mesmo arranjo do Android de fábrica, que também dirigia os LEDs por PWM.
+7. `/etc/e10-release` com data, imagem base, kernel e sha256 do módulo.
 
 Nada mais é alterado: usuários, senha (`root`/`1234` no primeiro login, como no Armbian),
 serviços e o `armbian-install` do ophub ficam como na imagem oficial.
@@ -55,9 +61,11 @@ Grave no microSD com balenaEtcher ou Rufus (modo dd). Cartão de 8 GB ou mais.
 
 ## Primeira vez em cada E10 (com Android de fábrica)
 
-1. Cartão inserido, segurar o botão UPDATE, ligar a alimentação, soltar após uns 5 s. O
-   U-Boot de fábrica executa o `aml_autoscript` do cartão e passa a bootar do cartão sempre que
-   houver um inserido. Sem cartão, volta ao Android normalmente.
+1. Cartão inserido, segurar o botão de recuperação ao ligar a alimentação (na E10 funcionou com
+   RESET + UPDATE; documentar a sequência exata que foi usada), soltar após uns 5 s. O U-Boot de
+   fábrica executa o `aml_autoscript` do cartão e passa a bootar do cartão sempre que houver um
+   inserido. Sem cartão, volta ao Android normalmente. POWER fica vermelho durante o bootloader e
+   verde quando o kernel sobe; NET fica verde ao conectar.
 2. Primeiro login: `root` / `1234`; o Armbian pede senha nova e cria um usuário.
 3. Conferir: `cat /proc/device-tree/model` (deve dizer BTV Express E10),
    `cat /sys/kernel/debug/mmc0/ios` (25 MHz, legacy, 4 bits), `ip link` (só `wlan0`),

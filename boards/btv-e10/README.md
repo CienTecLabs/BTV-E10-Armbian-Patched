@@ -3,6 +3,7 @@
 - SoC Amlogic S905X2 (G12A), 2 GB LPDDR4, eMMC 8 GB, WiFi RTL8189FTV (SDIO 024c:f179) em `sd_emmc_a`, Ethernet 100 Mbit (PHY interno)
 - Imagem base: ophub `amlogic_s905x2` (serie 6.12), DTB derivado do `meson-g12a-sei510.dtb`
 - `armbian-install`: modelo `309` (BTV-Express-E10), sem `-m yes`
+- LEDs frontais: POWER em GPIOAO_11 (PWM_AO_A), NET em GPIOAO_4 (PWM_AO_C), pares vermelho/verde; LED de IR em GPIOH_5 (PWM_F), nao usado
 - Detalhes das causas e da matriz de testes do WiFi em `docs/WIFI.md`
 
 Arquivos desta pasta:
